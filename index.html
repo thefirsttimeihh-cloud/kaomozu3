@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>顔文字ペット & 丸ビジュアライザー</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #06060a;
+            font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+            color: #ffffff;
+            height: 100vh;
+            width: 100vw;
+            user-select: none;
+        }
+
+        /* ビジュアライザー用のキャンバス */
+        #visualizer-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 0;
+            cursor: pointer;
+        }
+
+        .pet-container {
+            position: absolute;
+            left: 0;
+            top: 0;
+            will-change: transform;
+            cursor: pointer;
+            z-index: 10;
+        }
+
+        .pet-flip {
+            transition: transform 0.15s ease;
+            transform-origin: center center;
+            display: inline-block;
+        }
+
+        .pet-bounce {
+            display: inline-block;
+            will-change: transform;
+            transform-origin: bottom center;
+        }
+
+        .pet-face {
+            font-size: 3rem;
+            white-space: nowrap;
+            color: #ffffff;
+            text-shadow: 0 4px 10px rgba(0,0,0,0.8), 0 0 20px rgba(255,255,255,0.4);
+            padding: 0 10px;
+        }
+
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(20, 20, 30, 0.88);
+            backdrop-filter: blur(12px);
+            padding: 12px 24px;
+            border-radius: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 100;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        button, select {
+            padding: 8px 16px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            border-radius: 20px;
+            background-color: #333444;
+            color: #fff;
+            transition: all 0.2s ease;
+            outline: none;
+        }
+
+        button:hover, select:hover {
+            transform: translateY(-2px);
+            background-color: #444566;
+        }
+
+        #change-face-btn { background-color: #00ff88; color: #000; }
+        #change-face-btn:hover { background-color: #00cc66; }
+
+        #play-btn { background-color: #00aaff; color: #fff; }
+        #play-btn:hover { background-color: #0088cc; }
+
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            background: rgba(255,255,255,0.1);
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+
+        .slider-group.highlight {
+            background: rgba(255, 0, 128, 0.25);
+            border: 1px solid rgba(255, 0, 128, 0.5);
+        }
+
+        input[type="range"] {
+            cursor: pointer;
+            width: 80px;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="visualizer-canvas"></canvas>
+
+    <div id="controls">
+        <button id="change-face-btn">🔄 顔文字変更</button>
+        <button id="play-btn">▶ 再生</button>
+
+        <select id="song-select">
+            <option value="BPM170.mp3" data-bpm="170">🎵 BPM170.mp3</option>
+            <option value="BPM126.mp3" data-bpm="126">🎵 BPM126.mp3</option>
+        </select>
+
+        <div class="slider-group highlight">
+            <label for="sens-slider">⚡ 丸の感度: <span id="sens-display">2.5</span>x</label>
+            <input type="range" id="sens-slider" min="1" max="5" step="0.1" value="2.5">
+        </div>
+
+        <div class="slider-group">
+            <label for="bpm-slider">BPM: <span id="bpm-display">170</span></label>
+            <input type="range" id="bpm-slider" min="60" max="240" step="1" value="170">
+        </div>
+        
+        <div class="slider-group">
+            <label for="offset-slider">ズレ調整</label>
+            <input type="range" id="offset-slider" min="-500" max="500" step="10" value="0">
+        </div>
+    </div>
+
+    <audio id="bgm" src="BPM170.mp3" loop preload="auto" crossorigin="anonymous"></audio>
+
+    <script>
+        // 周りの顔文字ペット（シンプルな2パターン）
+        const idleFaces = ["( ˘ω˘ )", "( ˙-˙ )"];
+        const movingFaces = ["(ง ˙ω˙)ว", "(っ･ω･)っ"];
+
+        // 中央の顔文字リスト
+        const centerFaces = ["( ˘ω˘ )", "٩(ˊᗜˋ*)و", "(๑•̀ㅂ•́)و", "(ง ˙ω˙)ว", "( ɞ̴̶̷ ̫ ɞ̴̶̷ )", "(*°∀°)=3", "ᕕ( ᐛ )ᕗ", "٩( 🔥ω🔥 )و"];
+
+        const bgm = document.getElementById('bgm');
+        const playBtn = document.getElementById('play-btn');
+        const changeFaceBtn = document.getElementById('change-face-btn');
+        const songSelect = document.getElementById('song-select');
+        const bpmSlider = document.getElementById('bpm-slider');
+        const bpmDisplay = document.getElementById('bpm-display');
+        const sensSlider = document.getElementById('sens-slider');
+        const sensDisplay = document.getElementById('sens-display');
+        const offsetSlider = document.getElementById('offset-slider');
+        
+        const canvas = document.getElementById('visualizer-canvas');
+        const ctx = canvas.getContext('2d');
+
+        let baseBpm = 170;
+        let lastTime = performance.now();
+        let globalTrackTime = 0;
+
+        // 周りのペットは1体のみ
+        let pet = null;
+
+        // ビジュアライザー & 中央演出用変数
+        let audioCtx;
+        let analyser;
+        let dataArray;
+        let isAudioInit = false;
+        let centerFaceIndex = 0;
+        let currentCenterRadius = 140;
+
+        // 中央顔文字の動き制御用変数
+        let lastBeatCount = -1;
+        let centerMode = 'swing';   // 'swing' (左右交互) または 'vertical' (上下動)
+
+        function pseudoRandom(seed) {
+            let x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+            return x - Math.floor(x);
+        }
+
+        function initAudioVisualizer() {
+            if (isAudioInit) return;
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+                analyser = audioCtx.createAnalyser();
+                
+                analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.5;
+
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                const source = audioCtx.createMediaElementSource(bgm);
+                source.connect(analyser);
+                analyser.connect(audioCtx.destination);
+                
+                isAudioInit = true;
+            } catch (e) {
+                console.warn("Web Audio API制限中", e);
+            }
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function getRandomItem(arr) {
+            return arr[Math.floor(Math.random() * arr.length)];
+        }
+
+        class Pet {
+            constructor() {
+                this.x = Math.random() * (window.innerWidth - 150) + 20;
+                this.y = Math.random() * (window.innerHeight - 200) + 20;
+                this.vx = 0;
+                this.vy = 0;
+                this.direction = 1;
+                this.isMoving = false;
+                this.stateTimer = 0;
+                
+                this.width = 100;
+                this.height = 70;
+
+                this.container = document.createElement('div');
+                this.container.className = 'pet-container';
+
+                this.flipWrapper = document.createElement('div');
+                this.flipWrapper.className = 'pet-flip';
+
+                this.bounceWrapper = document.createElement('div');
+                this.bounceWrapper.className = 'pet-bounce';
+
+                this.face = document.createElement('div');
+                this.face.className = 'pet-face';
+
+                this.bounceWrapper.appendChild(this.face);
+                this.flipWrapper.appendChild(this.bounceWrapper);
+                this.container.appendChild(this.flipWrapper);
+                document.body.appendChild(this.container);
+
+                this.changeState();
+                setTimeout(() => this.updateSize(), 50);
+            }
+
+            updateSize() {
+                const rect = this.face.getBoundingClientRect();
+                this.width = rect.width || 100;
+                this.height = rect.height || 70;
+            }
+
+            updateDirection() {
+                this.direction = this.vx >= 0 ? 1 : -1;
+                this.flipWrapper.style.transform = `scaleX(${this.direction})`;
+            }
+
+            changeState() {
+                this.isMoving = Math.random() > 0.2;
+
+                if (this.isMoving) {
+                    this.face.textContent = getRandomItem(movingFaces);
+                    const angle = Math.random() * Math.PI * 2;
+                    const speedMultiplier = parseFloat(bpmSlider.value) / baseBpm;
+                    const speed = (0.8 + Math.random() * 1.5) * speedMultiplier;
+
+                    this.vx = Math.cos(angle) * speed;
+                    this.vy = Math.sin(angle) * speed;
+                    this.updateDirection();
+                    this.stateTimer = 3000 + Math.random() * 4000;
+                } else {
+                    this.face.textContent = getRandomItem(idleFaces);
+                    this.vx = 0;
+                    this.vy = 0;
+                    this.stateTimer = 2000 + Math.random() * 3000;
+                }
+                setTimeout(() => this.updateSize(), 50);
+            }
+
+            update(dt, globalBeatTime) {
+                this.stateTimer -= dt;
+                if (this.stateTimer <= 0) this.changeState();
+
+                const beatPhase = globalBeatTime % 1;
+                const jumpPhase = 1 - Math.pow(2 * beatPhase - 1, 2);
+                
+                let bounceY = jumpPhase * -26; 
+                let scaleY = 1 + jumpPhase * 0.15;
+                let scaleX = 1 - jumpPhase * 0.1;
+
+                if (beatPhase < 0.15) {
+                    const squash = Math.sin((beatPhase / 0.15) * Math.PI);
+                    scaleY = 1 - (squash * 0.2);
+                    scaleX = 1 + (squash * 0.2);
+                }
+
+                if (this.isMoving) {
+                    this.x += this.vx;
+                    this.y += this.vy;
+
+                    const uiAreaHeight = 100;
+
+                    if (this.x < 0) {
+                        this.x = 0; this.vx *= -1; this.updateDirection();
+                    } else if (this.x + this.width > window.innerWidth) {
+                        this.x = window.innerWidth - this.width; this.vx *= -1; this.updateDirection();
+                    }
+
+                    if (this.y < 0) {
+                        this.y = 0; this.vy *= -1;
+                    } else if (this.y + this.height > window.innerHeight - uiAreaHeight) {
+                        this.y = window.innerHeight - uiAreaHeight - this.height; this.vy *= -1;
+                    }
+                }
+
+                this.bounceWrapper.style.transform = `translateY(${bounceY}px) scale(${scaleX}, ${scaleY})`;
+                this.container.style.transform = `translate(${this.x}px, ${this.y}px)`;
+            }
+        }
+
+        // 周りの顔文字ペットが中央の大きな丸に入れないようにする衝突判定
+        function checkCenterCircleCollisions() {
+            if (!pet) return;
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+
+            const petCx = pet.x + pet.width / 2;
+            const petCy = pet.y + pet.height / 2;
+            const dx = petCx - cx;
+            const dy = petCy - cy;
+            const dist = Math.hypot(dx, dy);
+
+            const petRadius = Math.max(pet.width, pet.height) / 2;
+            const minDist = currentCenterRadius + petRadius + 15;
+
+            if (dist < minDist) {
+                const overlap = minDist - dist;
+                const nx = dist === 0 ? 1 : dx / dist;
+                const ny = dist === 0 ? 0 : dy / dist;
+
+                pet.x += nx * overlap;
+                pet.y += ny * overlap;
+
+                if (pet.isMoving) {
+                    const dot = pet.vx * nx + pet.vy * ny;
+                    if (dot < 0) {
+                        pet.vx = pet.vx - 2 * dot * nx;
+                        pet.vy = pet.vy - 2 * dot * ny;
+                        pet.updateDirection();
+                    }
+                }
+            }
+        }
+
+        function setBgmSpeed() {
+            const currentBpm = parseFloat(bpmSlider.value);
+            if (bgm.readyState >= 2) { 
+                bgm.playbackRate = currentBpm / baseBpm;
+            }
+        }
+
+        function updateGlobalSpeed() {
+            const currentBpm = parseFloat(bpmSlider.value);
+            bpmDisplay.textContent = currentBpm;
+            setBgmSpeed();
+        }
+
+        function nextCenterFace() {
+            centerFaceIndex = (centerFaceIndex + 1) % centerFaces.length;
+        }
+
+        sensSlider.addEventListener('input', () => {
+            sensDisplay.textContent = sensSlider.value;
+        });
+
+        songSelect.addEventListener('change', () => {
+            const selectedOption = songSelect.options[songSelect.selectedIndex];
+            baseBpm = parseFloat(selectedOption.dataset.bpm);
+
+            bpmSlider.value = baseBpm;
+            bpmDisplay.textContent = baseBpm;
+            offsetSlider.value = 0;
+
+            const wasPlaying = !bgm.paused;
+            bgm.src = selectedOption.value;
+            bgm.currentTime = 0;
+            globalTrackTime = 0;
+
+            if (wasPlaying) {
+                bgm.play().catch(e => console.error("再生エラー:", e));
+            }
+            updateGlobalSpeed();
+        });
+
+        playBtn.addEventListener('click', async () => {
+            initAudioVisualizer();
+
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            if (bgm.paused) {
+                try {
+                    await bgm.play();
+                    playBtn.textContent = '⏸ 一時停止';
+                } catch (error) {
+                    console.error("再生エラー:", error);
+                    alert("音声ファイルを再生できませんでした。");
+                }
+            } else {
+                bgm.pause();
+                playBtn.textContent = '▶ 再生';
+            }
+        });
+
+        changeFaceBtn.addEventListener('click', nextCenterFace);
+
+        canvas.addEventListener('click', (e) => {
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
+            if (dist <= currentCenterRadius) {
+                nextCenterFace();
+            }
+        });
+
+        bpmSlider.addEventListener('input', updateGlobalSpeed);
+
+        // --- ★ビジュアライザー & 中央顔文字描画 ---
+        function drawVisualizer(dt, globalBeatTime) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            const sensitivity = parseFloat(sensSlider.value);
+
+            if (isAudioInit && !bgm.paused) {
+                analyser.getByteFrequencyData(dataArray);
+
+                let bass = 0;
+                for (let i = 0; i < 6; i++) {
+                    bass += dataArray[i];
+                }
+                bass = (bass / 6);
+
+                const bassNormalized = Math.pow(bass / 255, 1.2); 
+                const circlePulse = bassNormalized * sensitivity;
+
+                // --- 1. 背景シェイク＆ズーム ---
+                ctx.save();
+
+                const bgZoom = 1 + (circlePulse * 0.08); 
+                const shakeX = (Math.random() - 0.5) * (circlePulse * 16);
+                const shakeY = (Math.random() - 0.5) * (circlePulse * 16);
+
+                ctx.translate(cx + shakeX, cy + shakeY);
+                ctx.scale(bgZoom, bgZoom);
+                ctx.translate(-cx, -cy);
+
+                // 背景ネオンリング波紋
+                const bgPulseRadius = (globalBeatTime * 150) % (Math.max(canvas.width, canvas.height) * 0.8);
+                ctx.beginPath();
+                ctx.arc(cx, cy, bgPulseRadius, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(255, 0, 128, ${0.15 * Math.max(0, 1 - bgPulseRadius / 600)})`;
+                ctx.lineWidth = 4 + circlePulse * 8;
+                ctx.stroke();
+
+                if (circlePulse > 0.3) {
+                    const grad = ctx.createRadialGradient(cx, cy, 50, cx, cy, 400 * circlePulse);
+                    grad.addColorStop(0, `rgba(255, 0, 100, ${circlePulse * 0.25})`);
+                    grad.addColorStop(1, 'rgba(6, 6, 10, 0)');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+
+                // --- 2. 中央の丸ビジュアライザー ---
+                const baseRadius = 120;
+                const radius = baseRadius + Math.min(140, circlePulse * 85);
+                currentCenterRadius = radius + 30;
+
+                for (let r = 1; r <= 3; r++) {
+                    const outerRadius = radius + (r * 15 * (1 + circlePulse * 0.5));
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+                    ctx.strokeStyle = `hsla(${280 + r * 30 + circlePulse * 60}, 100%, 65%, ${0.8 / r})`;
+                    ctx.lineWidth = 3 + circlePulse * 3;
+                    ctx.shadowColor = `hsl(${280 + r * 30}, 100%, 50%)`;
+                    ctx.shadowBlur = 15;
+                    ctx.stroke();
+                }
+
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#08080f';
+                ctx.fill();
+
+                ctx.lineWidth = 6 + circlePulse * 6;
+                ctx.strokeStyle = `hsl(${Math.min(360, circlePulse * 160)}, 100%, 60%)`;
+                ctx.shadowColor = `hsl(${Math.min(360, circlePulse * 160)}, 100%, 50%)`;
+                ctx.shadowBlur = 20 + circlePulse * 30;
+                ctx.stroke();
+
+                ctx.restore(); // 背景シェイク解除
+
+                // --- 3. ★中央の顔文字（「左右交互スイング」と「上下動」がランダム切替） ---
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ffffff';
+
+                const beatCount = Math.floor(globalBeatTime);
+                const beatPhase = globalBeatTime % 1;
+
+                // 4拍（1小節）ごとにランダムでモード判定（確率50%）
+                if (beatCount % 4 === 0 && beatCount !== lastBeatCount) {
+                    lastBeatCount = beatCount;
+                    centerMode = pseudoRandom(beatCount * 13) > 0.5 ? 'swing' : 'vertical';
+                }
+
+                const swingProgress = Math.sin(beatPhase * Math.PI);
+                let rotateAngle = 0;
+                let offsetX = 0;
+                let offsetY = 0;
+
+                if (centerMode === 'swing') {
+                    // ★ 1拍ごとに「左 → 右 → 左 → 右...」と規則正しく交互に揺れる
+                    const direction = (beatCount % 2 === 0) ? -1 : 1;
+                    rotateAngle = direction * 0.22 * swingProgress; // 傾き
+                    offsetX = direction * 16 * swingProgress;      // 左右移動
+                    offsetY = -swingProgress * 8;                  // 軽く跳ねる
+                } else {
+                    // ★ まっすぐポンポンと上下に動く（傾き・左右移動なし）
+                    rotateAngle = 0;
+                    offsetX = 0;
+                    offsetY = -swingProgress * 22;                 // 上下跳ね
+                }
+
+                ctx.save();
+                ctx.translate(cx + offsetX, cy + offsetY);
+                ctx.rotate(rotateAngle);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 42px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(centerFaces[centerFaceIndex], 0, 0);
+
+                ctx.restore();
+
+            } else {
+                currentCenterRadius = 135;
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 120, 0, Math.PI * 2);
+                ctx.fillStyle = '#111118';
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#00aaff';
+                ctx.stroke();
+
+                ctx.fillStyle = '#888';
+                ctx.font = 'bold 28px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('PLAY MUSIC', cx, cy);
+            }
+        }
+
+        function animate(time) {
+            const dt = time - lastTime;
+            lastTime = time;
+
+            const currentBpm = parseFloat(bpmSlider.value);
+            const offsetSeconds = parseFloat(offsetSlider.value) / 1000;
+
+            if (!bgm.paused && bgm.readyState >= 2) {
+                globalTrackTime = bgm.currentTime;
+            } else {
+                globalTrackTime += (dt / 1000) * (currentBpm / baseBpm);
+            }
+
+            let globalBeatTime = (globalTrackTime + offsetSeconds) * (baseBpm / 60);
+            if (globalBeatTime < 0) globalBeatTime = Math.abs(globalBeatTime);
+
+            if (pet) pet.update(dt, globalBeatTime);
+            
+            checkCenterCircleCollisions(); 
+
+            drawVisualizer(dt, globalBeatTime);
+
+            requestAnimationFrame(animate);
+        }
+
+        pet = new Pet();
+        updateGlobalSpeed();
+        requestAnimationFrame(animate);
+
+        window.addEventListener('resize', () => {
+            const uiAreaHeight = 100;
+            if (pet) {
+                if (pet.x > window.innerWidth - pet.width) pet.x = window.innerWidth - pet.width;
+                if (pet.y > window.innerHeight - uiAreaHeight - pet.height) pet.y = window.innerHeight - uiAreaHeight - pet.height;
+            }
+        });
+    </script>
+</body>
+</html>
